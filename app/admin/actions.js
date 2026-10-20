@@ -1,7 +1,10 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { createSessionClient } from "@/lib/supabase/session";
+import { createAuthClient } from "@/lib/supabase/auth";
+import { createServerClient } from "@/lib/supabase/server";
 
 export async function login(prevState, formData) {
   const data = formData instanceof FormData ? formData : prevState;
@@ -70,4 +73,99 @@ export async function gantiPassword(prevState, formData) {
   }
 
   return { success: "Password berhasil diganti." };
+}
+
+export async function simpanProduk(prevState, formData) {
+  const authClient = await createAuthClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser();
+
+  if (authError || !user) {
+    redirect("/admin/login");
+  }
+
+  const id = formData.get("id");
+  const nama = formData.get("nama")?.toString().trim() || "";
+  const hargaRaw = formData.get("harga")?.toString().trim() || "";
+  const kategori = formData.get("kategori")?.toString().trim() || "";
+  const foto_url = formData.get("foto_url")?.toString().trim() || "";
+  const deskripsi = formData.get("deskripsi")?.toString().trim() || "";
+
+  const values = {
+    ...(id ? { id: String(id) } : {}),
+    nama,
+    harga: hargaRaw,
+    kategori,
+    foto_url,
+    deskripsi,
+  };
+
+  const errors = {};
+
+  if (!nama) {
+    errors.nama = "Nama produk wajib diisi.";
+  }
+
+  const hargaNum = Number(hargaRaw);
+  if (!hargaRaw || isNaN(hargaNum) || hargaNum <= 0) {
+    errors.harga = "Harga harus berupa angka lebih besar dari 0.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { errors, values };
+  }
+
+  const db = createServerClient();
+  const dataProduk = {
+    nama,
+    harga: Math.round(hargaNum),
+    kategori: kategori || null,
+    foto_url: foto_url || null,
+    deskripsi: deskripsi || null,
+  };
+
+  if (id) {
+    const { error } = await db.from("produk").update(dataProduk).eq("id", id);
+    if (error) {
+      return { errors: { general: error.message }, values };
+    }
+  } else {
+    const { error } = await db.from("produk").insert([dataProduk]);
+    if (error) {
+      return { errors: { general: error.message }, values };
+    }
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/");
+  if (id) {
+    revalidatePath(`/produk/${id}`);
+  }
+  redirect("/admin");
+}
+
+export async function hapusProduk(formData) {
+  const authClient = await createAuthClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser();
+
+  if (authError || !user) {
+    redirect("/admin/login");
+  }
+
+  const id = formData.get("id");
+  if (!id) {
+    redirect("/admin");
+  }
+
+  const db = createServerClient();
+  await db.from("produk").delete().eq("id", id);
+
+  revalidatePath("/admin");
+  revalidatePath("/");
+  redirect("/admin");
 }
